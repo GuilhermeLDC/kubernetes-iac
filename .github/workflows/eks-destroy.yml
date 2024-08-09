@@ -1,0 +1,56 @@
+name: Destroy EKS resources
+on: workflow_dispatch
+
+env:
+  EKS_CLUSTER_NAME: fiap-58-eks-cluster
+
+jobs:
+  deploy-aws-eks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Configurando credenciais AWS
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Update kube config
+        run: aws eks update-kubeconfig --name $EKS_CLUSTER_NAME --region us-east-1
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4.2.0
+        with:
+          version: 'v3.13.3'
+        id: install
+
+      - name: Uninstall Nginx
+        run: helm uninstall ingress-nginx
+
+      - name: Configuracao
+        uses: hashicorp/tfc-workflows-github/actions/upload-configuration@v1.0.0
+        id: plan-upload
+        with:
+          workspace: ${{ env.TF_WORKSPACE }}
+          directory: ${{ env.CONFIG_DIRECTORY }}
+          speculative: true 
+      
+      - name: Planejamento de Destruicao
+        uses: hashicorp/tfc-workflows-github/actions/create-run@v1.0.0
+        id: create-destroy-run
+        with:
+          workspace: ${{ env.TF_WORKSPACE }}
+          configuration_version: ${{ steps.plan-upload.outputs.configuration_version_id }}
+          plan_only: true
+          is_destroy: true
+
+      - name: Executa Destruicao
+        uses: hashicorp/tfc-workflows-github/actions/apply-run@v1.0.0
+        if: fromJSON(steps.create-destroy-run.outputs.payload).data.attributes.actions.IsConfirmable
+        id: destroy
+        with:
+          run: ${{ steps.create-destroy-run.outputs.run_id }}
+          comment: "Apply destroy from GitHub Actions CI ${{ github.sha }}"
